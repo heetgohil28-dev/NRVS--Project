@@ -12,8 +12,6 @@ from app.services.scoring_service import score_and_grade_host
 
 router = APIRouter(prefix="/api/scan", tags=["Scan Engine"])
 
-
-# ── Schemas ──────────────────────────────────────────
 class ScanRequest(BaseModel):
     targets: List[str]           # ["192.168.1.1", "10.0.0.0/24"]
     profile: Optional[str] = "standard"
@@ -27,18 +25,15 @@ class ScanResponse(BaseModel):
     profile: str
     message: str
 
-
-# ── Background task ──────────────────────────────────
 def run_scan_background(scan_id: int, targets: list, profile: str, extra_args: str, db: Session):
     try:
-        # Mark running
+      
         scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
         scan.status     = ScanStatus.RUNNING
         scan.started_at = datetime.utcnow()
         scan.progress   = 10
         db.commit()
 
-        # Run nmap
         results  = scanner.scan_targets(targets, profile, extra_args)
         raw_xml  = scanner.get_raw_xml()
 
@@ -46,17 +41,14 @@ def run_scan_background(scan_id: int, targets: list, profile: str, extra_args: s
         scan.progress = 60
         db.commit()
 
-        # Parse + save hosts/ports
         hosts = save_scan_results(db, scan_id, results)
 
         scan.progress = 80
         db.commit()
 
-        # Score each host
         for host in hosts:
             score_and_grade_host(host, db)
 
-        # Mark complete
         scan.status       = ScanStatus.COMPLETED
         scan.completed_at = datetime.utcnow()
         scan.progress     = 100
@@ -69,15 +61,13 @@ def run_scan_background(scan_id: int, targets: list, profile: str, extra_args: s
             db.commit()
         raise e
 
-
-# ── Endpoints ────────────────────────────────────────
 @router.post("/start", response_model=ScanResponse, status_code=202)
 def start_scan(
     req: ScanRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
-    # For now owner_id=1 (hardcoded until Maitrey's auth is merged)
+    
     scan = ScanJob(
         owner_id     = 1,
         targets      = req.targets,
