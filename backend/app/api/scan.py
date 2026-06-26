@@ -13,12 +13,10 @@ from app.services.scoring_service import score_and_grade_host
 
 router = APIRouter(prefix="/api/scan", tags=["Scan Engine"])
 
-
 class ScanRequest(BaseModel):
     targets: List[str]
     profile: Optional[str] = "standard"
     extra_args: Optional[str] = ""
-
 
 class ScanResponse(BaseModel):
     scan_id: int
@@ -26,7 +24,6 @@ class ScanResponse(BaseModel):
     targets: list
     profile: str
     message: str
-
 
 def run_scan_background(
     scan_id: int,
@@ -37,7 +34,6 @@ def run_scan_background(
 ):
     async def _run():
         from app.main import manager
-
         try:
             scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
             scan.status     = ScanStatus.RUNNING
@@ -50,10 +46,8 @@ def run_scan_background(
                 "status":   "running",
                 "message":  "Nmap scan started"
             })
-
             results = scanner.scan_targets(targets, profile, extra_args)
             raw_xml = scanner.get_raw_xml()
-
             scan.raw_xml  = raw_xml
             scan.progress = 60
             db.commit()
@@ -63,9 +57,7 @@ def run_scan_background(
                 "status":   "running",
                 "message":  f"Scan complete. Parsing {len(results['hosts'])} hosts..."
             })
-
             hosts = save_scan_results(db, scan_id, results)
-
             scan.progress = 80
             db.commit()
             await manager.broadcast(str(scan_id), {
@@ -73,6 +65,29 @@ def run_scan_background(
                 "progress": 80,
                 "status":   "running",
                 "message":  "Scoring hosts..."
+            })
+            for host in hosts:
+                score_and_grade_host(host, db)
+            scan.status       = ScanStatus.COMPLETED
+            scan.completed_at = datetime.utcnow()
+            scan.progress     = 100
+            db.commit()
+            await manager.broadcast(str(scan_id), {
+                "scan_id":  scan_id,
+                "progress": 100,
+                "status":   "completed",
+                "message":  "Scan complete"
+            })
+        except Exception as e:
+            scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+            if scan:
+                scan.status = ScanStatus.FAILED
+                db.commit()
+            await manager.broadcast(str(scan_id), {
+                "scan_id": scan_id,
+                "progress": 0,
+                "status":  "failed",
+                "message": str(e)
             })
 
             for host in hosts:
@@ -102,8 +117,7 @@ def run_scan_background(
                 "message":  str(e)
             })
 
-    asyncio.run(_run())
-
+asyncio.run(_run())
 
 @router.post("/start", response_model=ScanResponse, status_code=202)
 def start_scan(
