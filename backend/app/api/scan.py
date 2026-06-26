@@ -15,12 +15,10 @@ from app.utils.websocket_manager import ws_manager
 
 router = APIRouter(prefix="/api/scan", tags=["Scan Engine"])
 
-
 class ScanRequest(BaseModel):
     targets:    List[str]
     profile:    Optional[str] = "standard"
     extra_args: Optional[str] = ""
-
 
 class ScanResponse(BaseModel):
     scan_id:        int
@@ -29,7 +27,6 @@ class ScanResponse(BaseModel):
     expanded_count: int
     profile:        str
     message:        str
-
 
 def run_scan_background(
     scan_id: int,
@@ -46,14 +43,12 @@ def run_scan_background(
             scan.started_at = datetime.utcnow()
             scan.progress   = 10
             db.commit()
-            await ws_manager.broadcast_progress(
+await ws_manager.broadcast_progress(
                 str(scan_id), 10, "running", "Nmap scan started"
             )
-
             # ── Run nmap ─────────────────────────────
             results = scanner.scan_targets(targets, profile, extra_args)
             raw_xml = scanner.get_raw_xml()
-
             # ── 60% ─────────────────────────────────
             scan.raw_xml  = raw_xml
             scan.progress = 60
@@ -62,10 +57,8 @@ def run_scan_background(
                 str(scan_id), 60, "running",
                 f"Scan complete. Found {len(results['hosts'])} hosts. Parsing..."
             )
-
             # ── Parse + save ─────────────────────────
             hosts = save_scan_results(db, scan_id, results)
-
             # Broadcast each host found
             for h in hosts:
                 await ws_manager.broadcast_host_found(str(scan_id), {
@@ -74,7 +67,6 @@ def run_scan_background(
                     "os":        h.os_name,
                     "ports":     len(h.ports),
                 })
-
             # ── 80% ─────────────────────────────────
             scan.progress = 80
             db.commit()
@@ -104,8 +96,7 @@ def run_scan_background(
                 db.commit()
             await ws_manager.broadcast_error(str(scan_id), str(e))
 
-    asyncio.run(_run())
-
+asyncio.run(_run())
 
 @router.post("/start", response_model=ScanResponse, status_code=202)
 def start_scan(
