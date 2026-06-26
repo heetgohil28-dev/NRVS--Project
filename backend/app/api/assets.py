@@ -9,7 +9,7 @@ from app.api.auth import get_current_user
 from app.database.models import User
 from app.schemas.asset import AssetUpdate, CriticalityLevel
 
-router = APIRouter(prefix="/api/assets", tags=["Asset Inventory"])
+router = APIRouter(prefix="/assets", tags=["Asset Inventory"])
 
 
 @router.get("/")

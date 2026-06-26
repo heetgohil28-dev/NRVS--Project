@@ -11,7 +11,7 @@ from app.database.models import (
 )
 from app.api.auth import get_current_user
 
-router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
+router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 
 @router.get("/summary")

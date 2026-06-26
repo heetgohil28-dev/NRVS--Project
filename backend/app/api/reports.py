@@ -7,7 +7,7 @@ from app.database.connection import get_db
 from app.database.models import Report, ScanJob, ScanStatus, User
 from app.api.auth import get_current_user
 
-router = APIRouter(prefix="/api/reports", tags=["Reports"])
+router = APIRouter(prefix="/reports", tags=["Reports"])
 
 
 class ReportRequest(BaseModel):
