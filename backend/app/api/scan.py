@@ -1,26 +1,24 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import BaseModel
 import asyncio
 
 from app.database.connection import get_db
-from app.database.models import ScanJob, ScanStatus, HostResult
+from app.database.models import ScanJob, ScanStatus, HostResult, User
 from app.services.nmap_service import scanner
 from app.services.parser_service import save_scan_results
 from app.services.scoring_service import score_and_grade_host
-from app.utils.cidr_utils import parse_targets
+from app.utils.cidr_utils import validate_targets
 from app.utils.websocket_manager import ws_manager
+from app.api.auth import get_current_user
 
 router = APIRouter(prefix="/api/scan", tags=["Scan Engine"])
 
-
 class ScanRequest(BaseModel):
-    targets:    List[str]
-    profile:    Optional[str] = "standard"
-    extra_args: Optional[str] = ""
-
+    targets: List[str]
+    profile: Optional[str] = "standard"
 
 class ScanResponse(BaseModel):
     scan_id:        int
@@ -30,12 +28,10 @@ class ScanResponse(BaseModel):
     profile:        str
     message:        str
 
-
 def run_scan_background(
     scan_id: int,
     targets: list,
     profile: str,
-    extra_args: str,
     db: Session
 ):
     async def _run():
@@ -43,7 +39,7 @@ def run_scan_background(
             # ── 10% ─────────────────────────────────
             scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
             scan.status     = ScanStatus.RUNNING
-            scan.started_at = datetime.utcnow()
+            scan.started_at = datetime.now(timezone.utc)
             scan.progress   = 10
             db.commit()
             await ws_manager.broadcast_progress(
@@ -51,7 +47,7 @@ def run_scan_background(
             )
 
             # ── Run nmap ─────────────────────────────
-            results = scanner.scan_targets(targets, profile, extra_args)
+            results = scanner.scan_targets(targets, profile)
             raw_xml = scanner.get_raw_xml()
 
             # ── 60% ─────────────────────────────────
@@ -69,10 +65,10 @@ def run_scan_background(
             # Broadcast each host found
             for h in hosts:
                 await ws_manager.broadcast_host_found(str(scan_id), {
-                    "ip":        h.ip_address,
-                    "hostname":  h.hostname,
-                    "os":        h.os_name,
-                    "ports":     len(h.ports),
+                    "ip":       h.ip_address,
+                    "hostname": h.hostname,
+                    "os":       h.os_name,
+                    "ports":    len(h.ports),
                 })
 
             # ── 80% ─────────────────────────────────
@@ -88,7 +84,7 @@ def run_scan_background(
 
             # ── 100% ─────────────────────────────────
             scan.status       = ScanStatus.COMPLETED
-            scan.completed_at = datetime.utcnow()
+            scan.completed_at = datetime.now(timezone.utc)
             scan.progress     = 100
             db.commit()
             await ws_manager.broadcast_progress(
@@ -109,15 +105,15 @@ def run_scan_background(
 
 @router.post("/start", response_model=ScanResponse, status_code=202)
 def start_scan(
-    req: ScanRequest,
+    req:              ScanRequest,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
+    db:               Session = Depends(get_db),
+    current_user:     User    = Depends(get_current_user)
 ):
-    # Parse and expand CIDR targets
-    parsed = parse_targets(req.targets)
+    parsed = validate_targets(req.targets)
 
     scan = ScanJob(
-        owner_id     = 1,
+        owner_id     = current_user.id,
         targets      = req.targets,
         scan_profile = req.profile,
         status       = ScanStatus.PENDING,
@@ -129,7 +125,7 @@ def start_scan(
 
     background_tasks.add_task(
         run_scan_background,
-        scan.id, parsed["expanded"], req.profile, req.extra_args, db
+        scan.id, parsed["expanded"], req.profile, db
     )
 
     return ScanResponse(
@@ -147,8 +143,13 @@ def start_scan(
 
 
 @router.get("/list")
-def list_scans(db: Session = Depends(get_db)):
-    scans = db.query(ScanJob).order_by(ScanJob.created_at.desc()).limit(50).all()
+def list_scans(
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user)
+):
+    scans = db.query(ScanJob).filter(
+        ScanJob.owner_id == current_user.id
+    ).order_by(ScanJob.created_at.desc()).limit(50).all()
     return [
         {
             "scan_id":  s.id,
@@ -163,8 +164,15 @@ def list_scans(db: Session = Depends(get_db)):
 
 
 @router.get("/{scan_id}")
-def get_scan(scan_id: int, db: Session = Depends(get_db)):
-    scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+def get_scan(
+    scan_id:      int,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user)
+):
+    scan = db.query(ScanJob).filter(
+        ScanJob.id       == scan_id,
+        ScanJob.owner_id == current_user.id
+    ).first()
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
     return {
@@ -179,8 +187,15 @@ def get_scan(scan_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{scan_id}/results")
-def get_scan_results(scan_id: int, db: Session = Depends(get_db)):
-    scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+def get_scan_results(
+    scan_id:      int,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user)
+):
+    scan = db.query(ScanJob).filter(
+        ScanJob.id       == scan_id,
+        ScanJob.owner_id == current_user.id
+    ).first()
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
     if scan.status != ScanStatus.COMPLETED:
@@ -218,8 +233,15 @@ def get_scan_results(scan_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/{scan_id}")
-def delete_scan(scan_id: int, db: Session = Depends(get_db)):
-    scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+def delete_scan(
+    scan_id:      int,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user)
+):
+    scan = db.query(ScanJob).filter(
+        ScanJob.id       == scan_id,
+        ScanJob.owner_id == current_user.id
+    ).first()
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
     db.delete(scan)

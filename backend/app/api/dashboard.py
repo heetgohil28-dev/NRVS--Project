@@ -1,19 +1,24 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.database.connection import get_db
 from app.database.models import (
     ScanJob, ScanStatus, HostResult,
-    Vulnerability, SeverityLevel, Asset
+    Vulnerability, SeverityLevel, Asset, User
 )
+from app.api.auth import get_current_user
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
 
 
 @router.get("/summary")
-def summary(db: Session = Depends(get_db)):
+def summary(
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user)
+):
     return {
         "total_scans":     db.query(ScanJob).count(),
         "completed_scans": db.query(ScanJob).filter(
@@ -35,7 +40,11 @@ def summary(db: Session = Depends(get_db)):
 
 
 @router.get("/recent-scans")
-def recent_scans(limit: int = 10, db: Session = Depends(get_db)):
+def recent_scans(
+    limit:        int     = 10,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user)
+):
     scans = db.query(ScanJob).order_by(
         ScanJob.created_at.desc()
     ).limit(limit).all()
@@ -46,7 +55,8 @@ def recent_scans(limit: int = 10, db: Session = Depends(get_db)):
             "profile":      s.scan_profile,
             "status":       s.status,
             "progress":     s.progress,
-            "hosts_found":  len(s.hosts),
+            "hosts_found":  db.query(func.count(HostResult.id)).filter(
+                                HostResult.scan_id == s.id).scalar(),
             "created_at":   s.created_at,
             "completed_at": s.completed_at,
         }
@@ -55,7 +65,11 @@ def recent_scans(limit: int = 10, db: Session = Depends(get_db)):
 
 
 @router.get("/top-risky-hosts")
-def top_risky_hosts(limit: int = 10, db: Session = Depends(get_db)):
+def top_risky_hosts(
+    limit:        int     = 10,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user)
+):
     hosts = db.query(HostResult).order_by(
         HostResult.risk_score.desc()
     ).limit(limit).all()
@@ -66,15 +80,20 @@ def top_risky_hosts(limit: int = 10, db: Session = Depends(get_db)):
             "os":         h.os_name,
             "risk_score": h.risk_score,
             "grade":      h.security_grade,
-            "open_ports": len([p for p in h.ports if p.state == "open"]),
-            "vulns":      len(h.vulnerabilities),
+            "open_ports": db.query(func.count()).filter(
+                              HostResult.id == h.id).scalar(),
+            "vulns":      db.query(func.count(Vulnerability.id)).filter(
+                              Vulnerability.host_id == h.id).scalar(),
         }
         for h in hosts
     ]
 
 
 @router.get("/severity-breakdown")
-def severity_breakdown(db: Session = Depends(get_db)):
+def severity_breakdown(
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user)
+):
     return [
         {"severity": "critical", "count": db.query(Vulnerability).filter(
             Vulnerability.severity == SeverityLevel.CRITICAL).count()},
@@ -88,11 +107,15 @@ def severity_breakdown(db: Session = Depends(get_db)):
 
 
 @router.get("/vuln-trend")
-def vuln_trend(days: int = 7, db: Session = Depends(get_db)):
+def vuln_trend(
+    days:         int     = 7,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user)
+):
     result = []
     for i in range(days):
-        day_start = datetime.utcnow() - timedelta(days=i+1)
-        day_end   = datetime.utcnow() - timedelta(days=i)
+        day_start = datetime.now(timezone.utc) - timedelta(days=i+1)
+        day_end   = datetime.now(timezone.utc) - timedelta(days=i)
         count = db.query(Vulnerability).filter(
             Vulnerability.created_at >= day_start,
             Vulnerability.created_at <  day_end
@@ -106,11 +129,12 @@ def vuln_trend(days: int = 7, db: Session = Depends(get_db)):
 
 @router.get("/search")
 def search(
-    q:        Optional[str] = Query(None),
-    severity: Optional[str] = Query(None),
-    profile:  Optional[str] = Query(None),
-    status:   Optional[str] = Query(None),
-    db: Session = Depends(get_db)
+    q:            Optional[str] = Query(None, max_length=100),
+    severity:     Optional[str] = Query(None),
+    profile:      Optional[str] = Query(None),
+    status:       Optional[str] = Query(None),
+    db:           Session       = Depends(get_db),
+    current_user: User          = Depends(get_current_user)
 ):
     results = {"scans": [], "hosts": [], "vulnerabilities": []}
 
@@ -149,10 +173,11 @@ def search(
 
 @router.get("/scan-history")
 def scan_history(
-    limit:  int = 20,
-    offset: int = 0,
-    status: Optional[str] = Query(None),
-    db: Session = Depends(get_db)
+    limit:        int            = 20,
+    offset:       int            = 0,
+    status:       Optional[str]  = Query(None),
+    db:           Session        = Depends(get_db),
+    current_user: User           = Depends(get_current_user)
 ):
     q = db.query(ScanJob)
     if status:
@@ -169,7 +194,8 @@ def scan_history(
                 "targets":      s.targets,
                 "profile":      s.scan_profile,
                 "status":       s.status,
-                "hosts_found":  len(s.hosts),
+                "hosts_found":  db.query(func.count(HostResult.id)).filter(
+                                    HostResult.scan_id == s.id).scalar(),
                 "started_at":   s.started_at,
                 "completed_at": s.completed_at,
                 "duration_sec": (
@@ -184,9 +210,10 @@ def scan_history(
 
 @router.get("/compare/{scan_id_a}/{scan_id_b}")
 def compare_scans(
-    scan_id_a: int,
-    scan_id_b: int,
-    db: Session = Depends(get_db)
+    scan_id_a:    int,
+    scan_id_b:    int,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user)
 ):
     hosts_a = {h.ip_address: h for h in db.query(HostResult).filter(
         HostResult.scan_id == scan_id_a).all()}
