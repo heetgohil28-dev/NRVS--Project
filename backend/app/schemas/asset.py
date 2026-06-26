@@ -1,6 +1,13 @@
 from pydantic import BaseModel
 from typing import Optional, List
-from app.api.assets import CriticalityLevel
+from enum import Enum
+
+
+class CriticalityLevel(str, Enum):
+    LOW      = "low"
+    MEDIUM   = "medium"
+    HIGH     = "high"
+    CRITICAL = "critical"
 
 
 class AssetUpdate(BaseModel):

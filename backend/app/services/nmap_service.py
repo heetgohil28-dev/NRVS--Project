@@ -1,9 +1,9 @@
 import nmap
+import shutil
 import asyncio
 from typing import List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
-# Scan profiles — each maps to real nmap flags
 SCAN_PROFILES = {
     "quick":    "-T4 -F --open",
     "standard": "-T4 -sV -sC -O --open",
@@ -13,10 +13,28 @@ SCAN_PROFILES = {
     "udp":      "-T4 -sU -sV --open",
 }
 
+SCAN_TIMEOUTS = {
+    "quick":    120,
+    "standard": 300,
+    "deep":     900,
+    "stealth":  600,
+    "vuln":     600,
+    "udp":      600,
+}
+
+
+def _check_nmap_installed():
+    if not shutil.which("nmap"):
+        raise RuntimeError(
+            "nmap is not installed or not in PATH. "
+            "Install it with: sudo apt-get install nmap"
+        )
+
 
 class NmapScanner:
 
     def __init__(self):
+        _check_nmap_installed()
         self.nm = nmap.PortScanner()
 
     def scan_targets(
@@ -25,48 +43,47 @@ class NmapScanner:
         profile: str = "standard",
         extra_args: str = ""
     ) -> Dict[str, Any]:
-        """
-        Run nmap scan on one or more targets (IPs, hostnames, CIDRs).
-        Returns raw parsed result dict.
-        """
-        args = SCAN_PROFILES.get(profile, SCAN_PROFILES["standard"])
+        args    = SCAN_PROFILES.get(profile, SCAN_PROFILES["standard"])
+        timeout = SCAN_TIMEOUTS.get(profile, 300)
+
         if extra_args:
             args = f"{args} {extra_args}"
 
         target_str = " ".join(targets)
 
         try:
-            self.nm.scan(hosts=target_str, arguments=args)
+            self.nm.scan(
+                hosts=target_str,
+                arguments=args,
+                timeout=timeout
+            )
         except nmap.PortScannerError as e:
             raise RuntimeError(f"Nmap scan failed: {str(e)}")
+        except Exception as e:
+            raise RuntimeError(f"Unexpected scan error: {str(e)}")
 
         return self._parse_results()
 
     def _parse_results(self) -> Dict[str, Any]:
         results = {
-            "scan_time": datetime.utcnow().isoformat(),
+            "scan_time": datetime.now(timezone.utc).isoformat(),
             "hosts": []
         }
-
         for host in self.nm.all_hosts():
-            host_data = self._extract_host(host)
-            results["hosts"].append(host_data)
-
+            results["hosts"].append(self._extract_host(host))
         return results
 
     def _extract_host(self, host: str) -> Dict[str, Any]:
         nm = self.nm[host]
 
-        # ── OS Detection ──────────────────────────────
         os_name, os_accuracy, os_family = None, None, None
         if "osmatch" in nm and nm["osmatch"]:
-            best = nm["osmatch"][0]
+            best        = nm["osmatch"][0]
             os_name     = best.get("name")
             os_accuracy = int(best.get("accuracy", 0))
             osclass     = best.get("osclass", [{}])[0]
             os_family   = osclass.get("osfamily")
 
-        # ── Ports ─────────────────────────────────────
         ports = []
         for proto in nm.all_protocols():
             for port in nm[proto].keys():
@@ -83,7 +100,6 @@ class NmapScanner:
                     "script_output":      p.get("script", {}),
                 })
 
-        # ── MAC / Vendor ───────────────────────────────
         addresses = nm.get("addresses", {})
         mac       = addresses.get("mac")
         vendor    = None
@@ -91,20 +107,19 @@ class NmapScanner:
             vendor = nm["vendor"].get(mac)
 
         return {
-            "ip_address":   host,
-            "hostname":     nm.hostname() or None,
-            "host_state":   nm.state(),
-            "mac_address":  mac,
-            "vendor":       vendor,
-            "os_name":      os_name,
-            "os_accuracy":  os_accuracy,
-            "os_family":    os_family,
-            "ports":        ports,
+            "ip_address":  host,
+            "hostname":    nm.hostname() or None,
+            "host_state":  nm.state(),
+            "mac_address": mac,
+            "vendor":      vendor,
+            "os_name":     os_name,
+            "os_accuracy": os_accuracy,
+            "os_family":   os_family,
+            "ports":       ports,
         }
 
     def get_raw_xml(self) -> str:
         return self.nm.get_nmap_last_output()
 
 
-# Singleton
 scanner = NmapScanner()
