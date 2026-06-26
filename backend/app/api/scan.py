@@ -1,88 +1,123 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import BaseModel
+import asyncio
 
 from app.database.connection import get_db
-from app.database.models import ScanJob, ScanStatus, HostResult
+from app.database.models import ScanJob, ScanStatus, HostResult, User
 from app.services.nmap_service import scanner
 from app.services.parser_service import save_scan_results
 from app.services.scoring_service import score_and_grade_host
+from app.utils.cidr_utils import validate_targets
+from app.utils.websocket_manager import ws_manager
+from app.api.auth import get_current_user
 
 router = APIRouter(prefix="/api/scan", tags=["Scan Engine"])
 
-
-# ── Schemas ──────────────────────────────────────────
 class ScanRequest(BaseModel):
-    targets: List[str]           # ["192.168.1.1", "10.0.0.0/24"]
+    targets: List[str]
     profile: Optional[str] = "standard"
-    extra_args: Optional[str] = ""
-
 
 class ScanResponse(BaseModel):
-    scan_id: int
-    status: str
-    targets: list
-    profile: str
-    message: str
+    scan_id:        int
+    status:         str
+    targets:        list
+    expanded_count: int
+    profile:        str
+    message:        str
 
-
-# ── Background task ──────────────────────────────────
-def run_scan_background(scan_id: int, targets: list, profile: str, extra_args: str, db: Session):
-    try:
-        # Mark running
-        scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
-        scan.status     = ScanStatus.RUNNING
-        scan.started_at = datetime.utcnow()
-        scan.progress   = 10
-        db.commit()
-
-        # Run nmap
-        results  = scanner.scan_targets(targets, profile, extra_args)
-        raw_xml  = scanner.get_raw_xml()
-
-        scan.raw_xml  = raw_xml
-        scan.progress = 60
-        db.commit()
-
-        # Parse + save hosts/ports
-        hosts = save_scan_results(db, scan_id, results)
-
-        scan.progress = 80
-        db.commit()
-
-        # Score each host
-        for host in hosts:
-            score_and_grade_host(host, db)
-
-        # Mark complete
-        scan.status       = ScanStatus.COMPLETED
-        scan.completed_at = datetime.utcnow()
-        scan.progress     = 100
-        db.commit()
-
-    except Exception as e:
-        scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
-        if scan:
-            scan.status = ScanStatus.FAILED
+def run_scan_background(
+    scan_id: int,
+    targets: list,
+    profile: str,
+    db: Session
+):
+    async def _run():
+        try:
+            # ── 10% ─────────────────────────────────
+            scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+            scan.status     = ScanStatus.RUNNING
+            scan.started_at = datetime.now(timezone.utc)
+            scan.progress   = 10
             db.commit()
-        raise e
+            await ws_manager.broadcast_progress(
+                str(scan_id), 10, "running", "Nmap scan started"
+            )
+
+            # ── Run nmap ─────────────────────────────
+            results = scanner.scan_targets(targets, profile)
+            raw_xml = scanner.get_raw_xml()
+
+            # ── 60% ─────────────────────────────────
+            scan.raw_xml  = raw_xml
+            scan.progress = 60
+            db.commit()
+            await ws_manager.broadcast_progress(
+                str(scan_id), 60, "running",
+                f"Scan complete. Found {len(results['hosts'])} hosts. Parsing..."
+            )
+
+            # ── Parse + save ─────────────────────────
+            hosts = save_scan_results(db, scan_id, results)
+
+            # Broadcast each host found
+            for h in hosts:
+                await ws_manager.broadcast_host_found(str(scan_id), {
+                    "ip":       h.ip_address,
+                    "hostname": h.hostname,
+                    "os":       h.os_name,
+                    "ports":    len(h.ports),
+                })
+
+            # ── 80% ─────────────────────────────────
+            scan.progress = 80
+            db.commit()
+            await ws_manager.broadcast_progress(
+                str(scan_id), 80, "running", "Scoring hosts..."
+            )
+
+            # ── Score ────────────────────────────────
+            for host in hosts:
+                score_and_grade_host(host, db)
+
+            # ── 100% ─────────────────────────────────
+            scan.status       = ScanStatus.COMPLETED
+            scan.completed_at = datetime.now(timezone.utc)
+            scan.progress     = 100
+            db.commit()
+            await ws_manager.broadcast_progress(
+                str(scan_id), 100, "completed",
+                f"Done. {len(hosts)} hosts found.",
+                data={"total_hosts": len(hosts)}
+            )
+
+        except Exception as e:
+            scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+            if scan:
+                scan.status = ScanStatus.FAILED
+                db.commit()
+            await ws_manager.broadcast_error(str(scan_id), str(e))
+
+    asyncio.run(_run())
 
 
-# ── Endpoints ────────────────────────────────────────
 @router.post("/start", response_model=ScanResponse, status_code=202)
 def start_scan(
-    req: ScanRequest,
+    req:              ScanRequest,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
+    db:               Session = Depends(get_db),
+    current_user:     User    = Depends(get_current_user)
 ):
-    # For now owner_id=1 (hardcoded until Maitrey's auth is merged)
+    parsed = validate_targets(req.targets)
+
     scan = ScanJob(
-        owner_id     = 1,
+        owner_id     = current_user.id,
         targets      = req.targets,
         scan_profile = req.profile,
         status       = ScanStatus.PENDING,
+        options      = {"expanded_targets": parsed["expanded"]}
     )
     db.add(scan)
     db.commit()
@@ -90,21 +125,54 @@ def start_scan(
 
     background_tasks.add_task(
         run_scan_background,
-        scan.id, req.targets, req.profile, req.extra_args, db
+        scan.id, parsed["expanded"], req.profile, db
     )
 
     return ScanResponse(
-        scan_id = scan.id,
-        status  = "pending",
-        targets = req.targets,
-        profile = req.profile,
-        message = f"Scan #{scan.id} queued. Use GET /api/scan/{scan.id} to check progress."
+        scan_id        = scan.id,
+        status         = "pending",
+        targets        = req.targets,
+        expanded_count = parsed["total"],
+        profile        = req.profile,
+        message        = (
+            f"Scan #{scan.id} queued. "
+            f"{parsed['total']} hosts to scan. "
+            f"WebSocket: ws://localhost:8000/ws/scan/{scan.id}"
+        )
     )
 
 
+@router.get("/list")
+def list_scans(
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user)
+):
+    scans = db.query(ScanJob).filter(
+        ScanJob.owner_id == current_user.id
+    ).order_by(ScanJob.created_at.desc()).limit(50).all()
+    return [
+        {
+            "scan_id":  s.id,
+            "status":   s.status,
+            "targets":  s.targets,
+            "profile":  s.scan_profile,
+            "progress": s.progress,
+            "created":  s.created_at,
+        }
+        for s in scans
+    ]
+
+
 @router.get("/{scan_id}")
-def get_scan(scan_id: int, db: Session = Depends(get_db)):
-    scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+def get_scan(
+    scan_id:      int,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user)
+):
+    scan = db.query(ScanJob).filter(
+        ScanJob.id       == scan_id,
+        ScanJob.owner_id == current_user.id
+    ).first()
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
     return {
@@ -119,43 +187,63 @@ def get_scan(scan_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{scan_id}/results")
-def get_scan_results(scan_id: int, db: Session = Depends(get_db)):
-    scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+def get_scan_results(
+    scan_id:      int,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user)
+):
+    scan = db.query(ScanJob).filter(
+        ScanJob.id       == scan_id,
+        ScanJob.owner_id == current_user.id
+    ).first()
     if not scan:
         raise HTTPException(status_code=404, detail="Scan not found")
     if scan.status != ScanStatus.COMPLETED:
-        raise HTTPException(status_code=400, detail=f"Scan is {scan.status}, not completed yet")
+        raise HTTPException(status_code=400, detail=f"Scan is {scan.status}")
 
     hosts = db.query(HostResult).filter(HostResult.scan_id == scan_id).all()
     return {
-        "scan_id":    scan_id,
+        "scan_id":     scan_id,
         "total_hosts": len(hosts),
         "hosts": [
             {
-                "ip":            h.ip_address,
-                "hostname":      h.hostname,
-                "os":            h.os_name,
-                "risk_score":    h.risk_score,
-                "grade":         h.security_grade,
-                "open_ports":    len([p for p in h.ports if p.state == "open"]),
-                "vulns_found":   len(h.vulnerabilities),
+                "ip":         h.ip_address,
+                "hostname":   h.hostname,
+                "os":         h.os_name,
+                "risk_score": h.risk_score,
+                "grade":      h.security_grade,
+                "open_ports": len([p for p in h.ports if p.state == "open"]),
+                "vulns":      len(h.vulnerabilities),
+                "ports": [
+                    {
+                        "port":     p.port_number,
+                        "protocol": p.protocol,
+                        "state":    p.state,
+                        "service":  p.service_name,
+                        "version":  p.service_version,
+                        "product":  p.service_product,
+                        "cpe":      p.cpe,
+                    }
+                    for p in h.ports
+                ]
             }
             for h in hosts
         ]
     }
 
 
-@router.get("/")
-def list_scans(db: Session = Depends(get_db)):
-    scans = db.query(ScanJob).order_by(ScanJob.created_at.desc()).limit(50).all()
-    return [
-        {
-            "scan_id":  s.id,
-            "status":   s.status,
-            "targets":  s.targets,
-            "profile":  s.scan_profile,
-            "progress": s.progress,
-            "created":  s.created_at,
-        }
-        for s in scans
-    ]
+@router.delete("/{scan_id}")
+def delete_scan(
+    scan_id:      int,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user)
+):
+    scan = db.query(ScanJob).filter(
+        ScanJob.id       == scan_id,
+        ScanJob.owner_id == current_user.id
+    ).first()
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    db.delete(scan)
+    db.commit()
+    return {"message": f"Scan #{scan_id} deleted"}
