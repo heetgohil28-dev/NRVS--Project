@@ -3,10 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from contextlib import asynccontextmanager
 from app.database.connection import init_db
-<<<<<<< HEAD
-from app.api import auth, scan
+from app.api import auth, scan, assets, dashboard, reports
 from dotenv import load_dotenv
+from typing import Dict, List
 import logging
+import json
 import os
 
 load_dotenv()
@@ -16,15 +17,6 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 logger = logging.getLogger(__name__)
-=======
-from app.api import scan, assets, dashboard, auth
-import os, json
-from dotenv import load_dotenv
-from typing import Dict, List
-
-load_dotenv()
-
-ALLOWED_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 
 
 class ConnectionManager:
@@ -51,7 +43,6 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
->>>>>>> origin/heet-scan-engine
 
 
 @asynccontextmanager
@@ -63,7 +54,6 @@ async def lifespan(app: FastAPI):
     logger.info("NRVS shutting down")
 
 
-
 app = FastAPI(
     title="NRVS — Network & Vulnerability Scanner",
     version="2.0.0",
@@ -73,10 +63,9 @@ app = FastAPI(
 )
 
 ALLOWED_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+ALLOWED_HOSTS   = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -85,14 +74,11 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
-<<<<<<< HEAD
-app.include_router(auth.router, prefix="/api")
-app.include_router(scan.router, prefix="/api")
-=======
-app.include_router(auth.router)
-app.include_router(scan.router)
-app.include_router(assets.router)
-app.include_router(dashboard.router)
+app.include_router(auth.router,      prefix="/api")
+app.include_router(scan.router,      prefix="/api")
+app.include_router(assets.router,    prefix="/api")
+app.include_router(dashboard.router, prefix="/api")
+app.include_router(reports.router, prefix="/api")
 
 
 @app.websocket("/ws/scan/{scan_id}")
@@ -103,7 +89,6 @@ async def websocket_scan(websocket: WebSocket, scan_id: str):
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket, scan_id)
->>>>>>> origin/heet-scan-engine
 
 
 @app.get("/api/health")

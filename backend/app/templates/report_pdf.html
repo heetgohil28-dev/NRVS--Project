@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>NRVS Security Report — Scan #{{ scan.id }}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: Arial, sans-serif; background: #fff; color: #1a202c; font-size: 12px; line-height: 1.5; }
+  .container { padding: 40px; }
+  header { border-bottom: 3px solid #2b6cb0; padding-bottom: 20px; margin-bottom: 30px; }
+  header h1 { font-size: 22px; color: #2b6cb0; }
+  header p { color: #4a5568; font-size: 11px; margin-top: 4px; }
+  .meta-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 16px; }
+  .meta-item { border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px; }
+  .meta-item .label { font-size: 9px; color: #718096; text-transform: uppercase; }
+  .meta-item .value { font-size: 13px; font-weight: 700; color: #1a202c; margin-top: 2px; }
+  h2 { font-size: 14px; color: #2b6cb0; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin: 24px 0 12px; }
+  .score-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .score-card { border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; text-align: center; }
+  .score-card .count { font-size: 24px; font-weight: 800; }
+  .score-card .label { font-size: 10px; color: #718096; }
+  .critical { color: #c53030; }
+  .high     { color: #c05621; }
+  .medium   { color: #b7791f; }
+  .low      { color: #276749; }
+  .host-card { border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px; margin-bottom: 16px; page-break-inside: avoid; }
+  .host-header { display: flex; justify-content: space-between; margin-bottom: 12px; }
+  .host-ip { font-size: 14px; font-weight: 700; color: #2b6cb0; }
+  .grade { font-size: 18px; font-weight: 800; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 11px; }
+  th { background: #ebf8ff; color: #2c5282; text-align: left; padding: 6px 8px; font-size: 10px; }
+  td { padding: 6px 8px; border-bottom: 1px solid #e2e8f0; }
+  .badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+  .badge-critical { background: #fff5f5; color: #c53030; border: 1px solid #c53030; }
+  .badge-high     { background: #fffaf0; color: #c05621; border: 1px solid #c05621; }
+  .badge-medium   { background: #fffff0; color: #b7791f; border: 1px solid #b7791f; }
+  .badge-low      { background: #f0fff4; color: #276749; border: 1px solid #276749; }
+  footer { margin-top: 40px; padding-top: 12px; border-top: 1px solid #e2e8f0; font-size: 10px; color: #718096; text-align: center; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>NRVS Security Assessment Report</h1>
+    <p>Network & Vulnerability Scanner | Generated: {{ generated_at }}</p>
+    <div class="meta-grid">
+      <div class="meta-item"><div class="label">Scan ID</div><div class="value">#{{ scan.id }}</div></div>
+      <div class="meta-item"><div class="label">Profile</div><div class="value">{{ scan.scan_profile }}</div></div>
+      <div class="meta-item"><div class="label">Hosts</div><div class="value">{{ total_hosts }}</div></div>
+      <div class="meta-item"><div class="label">Total Vulns</div><div class="value">{{ total_vulns }}</div></div>
+    </div>
+  </header>
+
+  <h2>Executive Summary</h2>
+  <div class="score-grid">
+    <div class="score-card"><div class="count critical">{{ critical_count }}</div><div class="label">Critical</div></div>
+    <div class="score-card"><div class="count high">{{ high_count }}</div><div class="label">High</div></div>
+    <div class="score-card"><div class="count medium">{{ medium_count }}</div><div class="label">Medium</div></div>
+    <div class="score-card"><div class="count low">{{ low_count }}</div><div class="label">Low</div></div>
+  </div>
+
+  <h2>Detailed Findings</h2>
+  {% for host in hosts %}
+  <div class="host-card">
+    <div class="host-header">
+      <div>
+        <div class="host-ip">{{ host.ip }}{% if host.hostname %} ({{ host.hostname }}){% endif %}</div>
+        {% if host.os %}<div style="color:#4a5568">OS: {{ host.os }}</div>{% endif %}
+        <div style="color:#4a5568">Risk Score: {{ host.risk_score }}</div>
+      </div>
+      <div class="grade {% if host.grade in ['A+','A'] %}low{% elif host.grade == 'B' %}medium{% elif host.grade == 'C' %}high{% else %}critical{% endif %}">
+        {{ host.grade or 'N/A' }}
+      </div>
+    </div>
+
+    {% if host.open_ports %}
+    <strong style="font-size:11px">Open Ports</strong>
+    <table>
+      <tr><th>Port</th><th>Protocol</th><th>Service</th><th>Version</th></tr>
+      {% for port in host.open_ports %}
+      <tr>
+        <td>{{ port.port_number }}</td>
+        <td>{{ port.protocol }}</td>
+        <td>{{ port.service_name or '—' }}</td>
+        <td>{{ port.service_version or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+
+    {% if host.vulns %}
+    <strong style="font-size:11px;display:block;margin-top:10px">Vulnerabilities</strong>
+    <table>
+      <tr><th>CVE ID</th><th>Severity</th><th>CVSS v3</th><th>Description</th></tr>
+      {% for vuln in host.vulns %}
+      <tr>
+        <td style="font-weight:600">{{ vuln.cve_id }}</td>
+        <td><span class="badge badge-{{ vuln.severity.value if vuln.severity else 'low' }}">{{ vuln.severity.value if vuln.severity else '—' }}</span></td>
+        <td>{{ vuln.cvss_v3_score or '—' }}</td>
+        <td>{{ (vuln.description or '')[:100] }}{% if vuln.description and vuln.description|length > 100 %}...{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+  </div>
+  {% else %}
+  <p style="color:#718096">No hosts found.</p>
+  {% endfor %}
+
+  <footer>
+    <p>NRVS — Network & Vulnerability Scanner | {{ generated_at }}</p>
+    <p>CONFIDENTIAL — For authorized personnel only</p>
+  </footer>
+</div>
+</body>
+</html>
