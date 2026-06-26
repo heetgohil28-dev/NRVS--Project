@@ -10,7 +10,7 @@ from app.database.models import ScanJob, ScanStatus, HostResult, User
 from app.services.nmap_service import scanner
 from app.services.parser_service import save_scan_results
 from app.services.scoring_service import score_and_grade_host
-from app.utils.cidr_utils import validate_targets
+from app.utils.cidr_utils import parse_targets
 from app.utils.websocket_manager import ws_manager
 from app.api.auth import get_current_user
 
@@ -110,7 +110,7 @@ def start_scan(
     db:               Session = Depends(get_db),
     current_user:     User    = Depends(get_current_user)
 ):
-    parsed = validate_targets(req.targets)
+    parsed = parse_targets(req.targets)
 
     scan = ScanJob(
         owner_id     = current_user.id,
