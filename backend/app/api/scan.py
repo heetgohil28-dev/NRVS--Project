@@ -10,22 +10,25 @@ from app.database.models import ScanJob, ScanStatus, HostResult
 from app.services.nmap_service import scanner
 from app.services.parser_service import save_scan_results
 from app.services.scoring_service import score_and_grade_host
+from app.utils.cidr_utils import parse_targets
+from app.utils.websocket_manager import ws_manager
 
 router = APIRouter(prefix="/api/scan", tags=["Scan Engine"])
 
 
 class ScanRequest(BaseModel):
-    targets: List[str]
-    profile: Optional[str] = "standard"
+    targets:    List[str]
+    profile:    Optional[str] = "standard"
     extra_args: Optional[str] = ""
 
 
 class ScanResponse(BaseModel):
-    scan_id: int
-    status: str
-    targets: list
-    profile: str
-    message: str
+    scan_id:        int
+    status:         str
+    targets:        list
+    expanded_count: int
+    profile:        str
+    message:        str
 
 
 def run_scan_background(
@@ -36,71 +39,70 @@ def run_scan_background(
     db: Session
 ):
     async def _run():
-        from app.main import manager
-
         try:
+            # ── 10% ─────────────────────────────────
             scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
             scan.status     = ScanStatus.RUNNING
             scan.started_at = datetime.utcnow()
             scan.progress   = 10
             db.commit()
-            await manager.broadcast(str(scan_id), {
-                "scan_id":  scan_id,
-                "progress": 10,
-                "status":   "running",
-                "message":  "Nmap scan started"
-            })
+            await ws_manager.broadcast_progress(
+                str(scan_id), 10, "running", "Nmap scan started"
+            )
 
+            # ── Run nmap ─────────────────────────────
             results = scanner.scan_targets(targets, profile, extra_args)
             raw_xml = scanner.get_raw_xml()
 
+            # ── 60% ─────────────────────────────────
             scan.raw_xml  = raw_xml
             scan.progress = 60
             db.commit()
-            await manager.broadcast(str(scan_id), {
-                "scan_id":  scan_id,
-                "progress": 60,
-                "status":   "running",
-                "message":  f"Scan complete. Parsing {len(results['hosts'])} hosts..."
-            })
+            await ws_manager.broadcast_progress(
+                str(scan_id), 60, "running",
+                f"Scan complete. Found {len(results['hosts'])} hosts. Parsing..."
+            )
 
+            # ── Parse + save ─────────────────────────
             hosts = save_scan_results(db, scan_id, results)
 
+            # Broadcast each host found
+            for h in hosts:
+                await ws_manager.broadcast_host_found(str(scan_id), {
+                    "ip":        h.ip_address,
+                    "hostname":  h.hostname,
+                    "os":        h.os_name,
+                    "ports":     len(h.ports),
+                })
+
+            # ── 80% ─────────────────────────────────
             scan.progress = 80
             db.commit()
-            await manager.broadcast(str(scan_id), {
-                "scan_id":  scan_id,
-                "progress": 80,
-                "status":   "running",
-                "message":  "Scoring hosts..."
-            })
+            await ws_manager.broadcast_progress(
+                str(scan_id), 80, "running", "Scoring hosts..."
+            )
 
+            # ── Score ────────────────────────────────
             for host in hosts:
                 score_and_grade_host(host, db)
 
+            # ── 100% ─────────────────────────────────
             scan.status       = ScanStatus.COMPLETED
             scan.completed_at = datetime.utcnow()
             scan.progress     = 100
             db.commit()
-            await manager.broadcast(str(scan_id), {
-                "scan_id":  scan_id,
-                "progress": 100,
-                "status":   "completed",
-                "message":  f"Done. {len(hosts)} hosts found."
-            })
+            await ws_manager.broadcast_progress(
+                str(scan_id), 100, "completed",
+                f"Done. {len(hosts)} hosts found.",
+                data={"total_hosts": len(hosts)}
+            )
 
         except Exception as e:
             scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
             if scan:
                 scan.status = ScanStatus.FAILED
                 db.commit()
-            from app.main import manager as m
-            await m.broadcast(str(scan_id), {
-                "scan_id":  scan_id,
-                "progress": 0,
-                "status":   "failed",
-                "message":  str(e)
-            })
+            await ws_manager.broadcast_error(str(scan_id), str(e))
 
     asyncio.run(_run())
 
@@ -111,11 +113,15 @@ def start_scan(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
+    # Parse and expand CIDR targets
+    parsed = parse_targets(req.targets)
+
     scan = ScanJob(
         owner_id     = 1,
         targets      = req.targets,
         scan_profile = req.profile,
         status       = ScanStatus.PENDING,
+        options      = {"expanded_targets": parsed["expanded"]}
     )
     db.add(scan)
     db.commit()
@@ -123,17 +129,19 @@ def start_scan(
 
     background_tasks.add_task(
         run_scan_background,
-        scan.id, req.targets, req.profile, req.extra_args, db
+        scan.id, parsed["expanded"], req.profile, req.extra_args, db
     )
 
     return ScanResponse(
-        scan_id = scan.id,
-        status  = "pending",
-        targets = req.targets,
-        profile = req.profile,
-        message = (
+        scan_id        = scan.id,
+        status         = "pending",
+        targets        = req.targets,
+        expanded_count = parsed["total"],
+        profile        = req.profile,
+        message        = (
             f"Scan #{scan.id} queued. "
-            f"Connect WebSocket: ws://localhost:8000/ws/scan/{scan.id}"
+            f"{parsed['total']} hosts to scan. "
+            f"WebSocket: ws://localhost:8000/ws/scan/{scan.id}"
         )
     )
 
