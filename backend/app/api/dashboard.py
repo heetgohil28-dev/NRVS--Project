@@ -107,6 +107,7 @@ def vuln_trend(days: int = 7, db: Session = Depends(get_db)):
 @router.get("/search")
 def search(
     q:        Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
     profile:  Optional[str] = Query(None),
     status:   Optional[str] = Query(None),
     db: Session = Depends(get_db)

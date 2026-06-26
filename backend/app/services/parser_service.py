@@ -44,7 +44,9 @@ def save_scan_results(
         db.commit()
         db.refresh(host)
 
+        # Auto upsert into asset inventory
         _upsert_asset(db, host)
+
         saved_hosts.append(host)
 
     return saved_hosts
