@@ -5,20 +5,22 @@ from datetime import datetime, timezone
 from pydantic import BaseModel
 import asyncio
 
-from app.database.connection import get_db
+from app.database.connection import get_db, SessionLocal
 from app.database.models import ScanJob, ScanStatus, HostResult, User
 from app.services.nmap_service import scanner
 from app.services.parser_service import save_scan_results
 from app.services.scoring_service import score_and_grade_host
-from app.utils.cidr_utils import validate_targets
+from app.utils.cidr_utils import parse_targets
+from app.utils.nmap_args_validator import validate_custom_args
 from app.utils.websocket_manager import ws_manager
 from app.api.auth import get_current_user
 
-router = APIRouter(prefix="/api/scan", tags=["Scan Engine"])
+router = APIRouter(prefix="/scan", tags=["Scan Engine"])
 
 class ScanRequest(BaseModel):
-    targets: List[str]
-    profile: Optional[str] = "standard"
+    targets:     List[str]
+    profile:     Optional[str] = "standard"
+    custom_args: Optional[str] = ""
 
 class ScanResponse(BaseModel):
     scan_id:        int
@@ -26,81 +28,74 @@ class ScanResponse(BaseModel):
     targets:        list
     expanded_count: int
     profile:        str
+    custom_args:    str
     message:        str
 
-def run_scan_background(
-    scan_id: int,
-    targets: list,
-    profile: str,
-    db: Session
-):
-    async def _run():
-        try:
-            # ── 10% ─────────────────────────────────
-            scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
-            scan.status     = ScanStatus.RUNNING
-            scan.started_at = datetime.now(timezone.utc)
-            scan.progress   = 10
-            db.commit()
-            await ws_manager.broadcast_progress(
-                str(scan_id), 10, "running", "Nmap scan started"
-            )
 
-            # ── Run nmap ─────────────────────────────
-            results = scanner.scan_targets(targets, profile)
-            raw_xml = scanner.get_raw_xml()
-
-            # ── 60% ─────────────────────────────────
-            scan.raw_xml  = raw_xml
-            scan.progress = 60
-            db.commit()
-            await ws_manager.broadcast_progress(
-                str(scan_id), 60, "running",
-                f"Scan complete. Found {len(results['hosts'])} hosts. Parsing..."
-            )
-
-            # ── Parse + save ─────────────────────────
-            hosts = save_scan_results(db, scan_id, results)
-
-            # Broadcast each host found
-            for h in hosts:
-                await ws_manager.broadcast_host_found(str(scan_id), {
-                    "ip":       h.ip_address,
-                    "hostname": h.hostname,
-                    "os":       h.os_name,
-                    "ports":    len(h.ports),
-                })
-
-            # ── 80% ─────────────────────────────────
-            scan.progress = 80
-            db.commit()
-            await ws_manager.broadcast_progress(
-                str(scan_id), 80, "running", "Scoring hosts..."
-            )
-
-            # ── Score ────────────────────────────────
-            for host in hosts:
-                score_and_grade_host(host, db)
-
-            # ── 100% ─────────────────────────────────
-            scan.status       = ScanStatus.COMPLETED
-            scan.completed_at = datetime.now(timezone.utc)
-            scan.progress     = 100
-            db.commit()
-            await ws_manager.broadcast_progress(
-                str(scan_id), 100, "completed",
-                f"Done. {len(hosts)} hosts found.",
-                data={"total_hosts": len(hosts)}
-            )
-
-        except Exception as e:
-            scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
-            if scan:
-                scan.status = ScanStatus.FAILED
+def run_scan_background(scan_id: int, targets: list, profile: str, custom_args: str = ""):
+    db = SessionLocal()
+    try:
+        async def _run():
+            try:
+                scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+                scan.status     = ScanStatus.RUNNING
+                scan.started_at = datetime.now(timezone.utc)
+                scan.progress   = 10
                 db.commit()
-            await ws_manager.broadcast_error(str(scan_id), str(e))
+                await ws_manager.broadcast_progress(
+                    str(scan_id), 10, "running", "Nmap scan started"
+                )
 
-    asyncio.run(_run())
+                results = scanner.scan_targets(targets, profile, custom_args)
+                raw_xml = scanner.get_raw_xml()
+
+                scan.raw_xml  = raw_xml
+                scan.progress = 60
+                db.commit()
+                await ws_manager.broadcast_progress(
+                    str(scan_id), 60, "running",
+                    f"Scan complete. Found {len(results['hosts'])} hosts. Parsing..."
+                )
+
+                hosts = save_scan_results(db, scan_id, results)
+
+                for h in hosts:
+                    await ws_manager.broadcast_host_found(str(scan_id), {
+                        "ip":       h.ip_address,
+                        "hostname": h.hostname,
+                        "os":       h.os_name,
+                        "ports":    len(h.ports),
+                    })
+
+                scan.progress = 80
+                db.commit()
+                await ws_manager.broadcast_progress(
+                    str(scan_id), 80, "running", "Scoring hosts..."
+                )
+
+                for host in hosts:
+                    score_and_grade_host(host, db)
+
+                scan.status       = ScanStatus.COMPLETED
+                scan.completed_at = datetime.now(timezone.utc)
+                scan.progress     = 100
+                db.commit()
+                await ws_manager.broadcast_progress(
+                    str(scan_id), 100, "completed",
+                    f"Done. {len(hosts)} hosts found.",
+                    data={"total_hosts": len(hosts)}
+                )
+
+            except Exception as e:
+                scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+                if scan:
+                    scan.status = ScanStatus.FAILED
+                    db.commit()
+                await ws_manager.broadcast_error(str(scan_id), str(e))
+
+        asyncio.run(_run())
+    finally:
+        db.close()
 
 
 @router.post("/start", response_model=ScanResponse, status_code=202)
@@ -110,14 +105,23 @@ def start_scan(
     db:               Session = Depends(get_db),
     current_user:     User    = Depends(get_current_user)
 ):
-    parsed = validate_targets(req.targets)
+    parsed = parse_targets(req.targets)
+
+    # Validate custom args securely
+    try:
+        safe_args = validate_custom_args(req.custom_args or "")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     scan = ScanJob(
         owner_id     = current_user.id,
         targets      = req.targets,
         scan_profile = req.profile,
         status       = ScanStatus.PENDING,
-        options      = {"expanded_targets": parsed["expanded"]}
+        options      = {
+            "expanded_targets": parsed["expanded"],
+            "custom_args":      safe_args
+        }
     )
     db.add(scan)
     db.commit()
@@ -125,7 +129,7 @@ def start_scan(
 
     background_tasks.add_task(
         run_scan_background,
-        scan.id, parsed["expanded"], req.profile, db
+        scan.id, parsed["expanded"], req.profile, safe_args
     )
 
     return ScanResponse(
@@ -134,6 +138,7 @@ def start_scan(
         targets        = req.targets,
         expanded_count = parsed["total"],
         profile        = req.profile,
+        custom_args    = safe_args,
         message        = (
             f"Scan #{scan.id} queued. "
             f"{parsed['total']} hosts to scan. "
@@ -181,6 +186,7 @@ def get_scan(
         "progress":     scan.progress,
         "targets":      scan.targets,
         "profile":      scan.scan_profile,
+        "custom_args":  scan.options.get("custom_args", "") if scan.options else "",
         "started_at":   scan.started_at,
         "completed_at": scan.completed_at,
     }
@@ -246,4 +252,4 @@ def delete_scan(
         raise HTTPException(status_code=404, detail="Scan not found")
     db.delete(scan)
     db.commit()
-    return {"message": f"Scan #{scan_id} deleted"}
+    return {"message": f"Scan #{scan.id} deleted"}

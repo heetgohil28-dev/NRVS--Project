@@ -2,22 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import Optional, List
-from enum import Enum
 
 from app.database.connection import get_db
 from app.database.models import Asset
 from app.api.auth import get_current_user
 from app.database.models import User
-from app.schemas.asset import AssetUpdate
+from app.schemas.asset import AssetUpdate, CriticalityLevel
 
-router = APIRouter(prefix="/api/assets", tags=["Asset Inventory"])
-
-
-class CriticalityLevel(str, Enum):
-    low      = "low"
-    medium   = "medium"
-    high     = "high"
-    critical = "critical"
+router = APIRouter(prefix="/assets", tags=["Asset Inventory"])
 
 
 @router.get("/")
@@ -65,11 +57,11 @@ def asset_summary(
     db:           Session = Depends(get_db),
     current_user: User    = Depends(get_current_user)
 ):
-    total    = db.query(func.count(Asset.id)).scalar()
-    critical = db.query(func.count(Asset.id)).filter(Asset.criticality == "critical").scalar()
-    high     = db.query(func.count(Asset.id)).filter(Asset.criticality == "high").scalar()
-    medium   = db.query(func.count(Asset.id)).filter(Asset.criticality == "medium").scalar()
-    low      = db.query(func.count(Asset.id)).filter(Asset.criticality == "low").scalar()
+    total     = db.query(func.count(Asset.id)).scalar()
+    critical  = db.query(func.count(Asset.id)).filter(Asset.criticality == "critical").scalar()
+    high      = db.query(func.count(Asset.id)).filter(Asset.criticality == "high").scalar()
+    medium    = db.query(func.count(Asset.id)).filter(Asset.criticality == "medium").scalar()
+    low       = db.query(func.count(Asset.id)).filter(Asset.criticality == "low").scalar()
     high_risk = db.query(func.count(Asset.id)).filter(Asset.last_risk_score >= 60).scalar()
     return {
         "total_assets":    total,
