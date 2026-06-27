@@ -218,3 +218,5 @@ __marimo__/
 .streamlit/secrets.toml
 backend/app/static/screenshots/*.txt
 .env
+backend/test*.db
+backend/reports/
