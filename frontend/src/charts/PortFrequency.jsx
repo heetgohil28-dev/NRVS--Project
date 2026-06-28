@@ -2,24 +2,24 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip,
   ResponsiveContainer, CartesianGrid
 } from 'recharts'
-
 export default function PortFrequency({ ports = [] }) {
   if (!ports.length) return (
     <div className="text-gray-500 text-sm text-center py-8">No data available</div>
   )
-
-  // Count port frequency
   const freq = {}
+  const services = {}
   ports.forEach(p => {
     const key = `${p.port}/${p.protocol}`
     freq[key] = (freq[key] || 0) + 1
+    if (p.service) services[key] = p.service
   })
-
   const data = Object.entries(freq)
-    .map(([port, count]) => ({ port, count }))
+    .map(([port, count]) => ({
+      port: services[port] ? `${port} (${services[port]})` : port,
+      count
+    }))
     .sort((a, b) => b.count - a.count)
     .slice(0, 10)
-
   return (
     <ResponsiveContainer width="100%" height={260}>
       <BarChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>

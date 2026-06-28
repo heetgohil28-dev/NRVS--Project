@@ -275,21 +275,33 @@ def compare_scans(
         HostResult.scan_id == scan_id_b).all()}
 
     all_ips = set(hosts_a) | set(hosts_b)
+    ips_a = set(hosts_a.keys())
+    ips_b = set(hosts_b.keys())
+
+    new_hosts     = list(ips_b - ips_a)
+    removed_hosts = list(ips_a - ips_b)
+
+    risk_changes = []
+    for ip in ips_a & ips_b:
+        old_score = hosts_a[ip].risk_score
+        new_score = hosts_b[ip].risk_score
+        if old_score != new_score:
+            risk_changes.append({
+                "ip":        ip,
+                "old_score": old_score,
+                "new_score": new_score,
+                "delta":     round(new_score - old_score, 2),
+            })
+
     return {
         "scan_a": scan_id_a,
         "scan_b": scan_id_b,
-        "comparison": [
-            {
-                "ip":           ip,
-                "in_a":         ip in hosts_a,
-                "in_b":         ip in hosts_b,
-                "risk_a":       hosts_a[ip].risk_score if ip in hosts_a else None,
-                "risk_b":       hosts_b[ip].risk_score if ip in hosts_b else None,
-                "grade_a":      hosts_a[ip].security_grade if ip in hosts_a else None,
-                "grade_b":      hosts_b[ip].security_grade if ip in hosts_b else None,
-                "vulns_a":      len(hosts_a[ip].vulnerabilities) if ip in hosts_a else 0,
-                "vulns_b":      len(hosts_b[ip].vulnerabilities) if ip in hosts_b else 0,
-            }
-            for ip in sorted(all_ips)
-        ]
+        "summary": {
+            "hosts_added":   len(new_hosts),
+            "hosts_removed": len(removed_hosts),
+            "hosts_changed": len(risk_changes),
+        },
+        "new_hosts":     new_hosts,
+        "removed_hosts": removed_hosts,
+        "risk_changes":  risk_changes,
     }

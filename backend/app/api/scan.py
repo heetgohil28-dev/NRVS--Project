@@ -271,6 +271,26 @@ def get_scan_results(
     }
 
 
+
+@router.post("/{scan_id}/stop", status_code=status.HTTP_200_OK)
+def stop_scan(
+    scan_id:      int,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+    if not scan:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan not found")
+    if current_user.role != "admin" and scan.owner_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    if scan.status not in (ScanStatus.PENDING, ScanStatus.RUNNING):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Scan is already {scan.status}")
+
+    scan.status = ScanStatus.FAILED
+    db.commit()
+    logger.info("Scan #%s stopped by %s", scan_id, current_user.username)
+    return {"message": f"Scan #{scan_id} stopped"}
+
 @router.delete("/{scan_id}", status_code=status.HTTP_200_OK)
 def delete_scan(
     scan_id:      int,

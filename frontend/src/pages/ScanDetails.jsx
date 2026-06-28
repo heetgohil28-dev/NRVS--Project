@@ -13,6 +13,7 @@ export default function ScanDetails() {
   const [results, setResults]   = useState(null)
   const [loading, setLoading]   = useState(true)
   const [reporting,setReporting]= useState(false)
+  const [stopping, setStopping]  = useState(false)
 
   useEffect(() => {
     scanService.getScan(id).then(setScan)
@@ -21,6 +22,20 @@ export default function ScanDetails() {
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [id])
+
+  const stopScan = async () => {
+    if (!confirm('Stop this scan?')) return
+    setStopping(true)
+    try {
+      await scanService.stopScan(id)
+      const updated = await scanService.getScan(id)
+      setScan(updated)
+    } catch (err) {
+      alert(err.response?.data?.detail || 'Failed to stop scan')
+    } finally {
+      setStopping(false)
+    }
+  }
 
   const generateReport = async type => {
     setReporting(true)
@@ -53,9 +68,17 @@ export default function ScanDetails() {
           </p>
         </div>
         <div className="flex gap-2">
-          <button className="btn-ghost" onClick={() => navigate('/scan/history')}>
+          <button className="btn-ghost" onClick={() => navigate('/history')}>
             ← Back
           </button>
+          {scan?.status === 'running' || scan?.status === 'pending' ? (
+            <button
+              className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+              disabled={stopping}
+              onClick={stopScan}>
+              {stopping ? 'Stopping...' : 'Stop Scan'}
+            </button>
+          ) : null}
           <button
             className="btn-primary"
             disabled={reporting || scan?.status !== 'completed'}

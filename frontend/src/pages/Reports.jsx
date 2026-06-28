@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { reportService } from '../services/reportService'
-import { Trash2, FileText } from 'lucide-react'
+import { Trash2, FileText, Download } from 'lucide-react'
 
 export default function Reports() {
   const [reports, setReports] = useState([])
@@ -18,6 +18,27 @@ export default function Reports() {
     if (!confirm('Delete this report?')) return
     await reportService.deleteReport(id)
     load()
+  }
+
+  const downloadReport = (reportId) => {
+    const token = localStorage.getItem('access_token')
+    const url = `/api/reports/download/${reportId}`
+    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+      .then(res => {
+        const disposition = res.headers.get('content-disposition')
+        const filename = disposition
+          ? disposition.split('filename=')[1]?.replace(/"/g, '')
+          : `report_${reportId}`
+        return res.blob().then(blob => ({ blob, filename }))
+      })
+      .then(({ blob, filename }) => {
+        const a = document.createElement('a')
+        a.href = URL.createObjectURL(blob)
+        a.download = filename
+        a.click()
+        URL.revokeObjectURL(a.href)
+      })
+      .catch(() => alert('Download failed'))
   }
 
   if (loading) return (
@@ -38,7 +59,7 @@ export default function Reports() {
               <th className="text-left py-2 pr-4">Type</th>
               <th className="text-left py-2 pr-4">Hosts</th>
               <th className="text-left py-2 pr-4">Vulns</th>
-              <th className="text-left py-2 pr-4">Critical</th>
+              <th className="text-left py-2 pr-4">Size</th>
               <th className="text-left py-2 pr-4">Created</th>
               <th className="text-left py-2">Actions</th>
             </tr>
@@ -55,16 +76,23 @@ export default function Reports() {
                 </td>
                 <td className="py-2 pr-4 text-gray-300">{r.total_hosts}</td>
                 <td className="py-2 pr-4 text-gray-300">{r.total_vulns}</td>
-                <td className="py-2 pr-4">
-                  <span className="badge-critical">{r.critical}</span>
+                <td className="py-2 pr-4 text-gray-500 text-xs">
+                  {r.file_size ? `${(r.file_size / 1024).toFixed(1)} KB` : '—'}
                 </td>
                 <td className="py-2 pr-4 text-gray-500 text-xs">
                   {r.created_at ? new Date(r.created_at).toLocaleDateString() : '—'}
                 </td>
-                <td className="py-2">
+                <td className="py-2 flex gap-3">
+                  <button
+                    onClick={() => downloadReport(r.report_id)}
+                    className="text-gray-600 hover:text-sky-400 transition-colors"
+                    title="Download">
+                    <Download size={15}/>
+                  </button>
                   <button
                     onClick={() => deleteReport(r.report_id)}
-                    className="text-gray-600 hover:text-red-400 transition-colors">
+                    className="text-gray-600 hover:text-red-400 transition-colors"
+                    title="Delete">
                     <Trash2 size={15}/>
                   </button>
                 </td>
