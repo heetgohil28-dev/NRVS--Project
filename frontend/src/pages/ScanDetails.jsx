@@ -8,6 +8,15 @@ import PortFrequency from '../charts/PortFrequency'
 import { RefreshCw } from 'lucide-react'
 
 export default function ScanDetails() {
+<<<<<<< HEAD
+  const { id }                  = useParams()
+  const navigate                = useNavigate()
+  const [scan,    setScan]      = useState(null)
+  const [results, setResults]   = useState(null)
+  const [loading, setLoading]   = useState(true)
+  const [reporting,setReporting]= useState(false)
+  const [stopping, setStopping]  = useState(false)
+=======
   const { id }                    = useParams()
   const navigate                  = useNavigate()
   const [scan,      setScan]      = useState(null)
@@ -15,6 +24,7 @@ export default function ScanDetails() {
   const [loading,   setLoading]   = useState(true)
   const [reporting, setReporting] = useState(false)
   const [activeTab, setActiveTab] = useState('hosts')
+>>>>>>> heet-scan-engine
 
   const loadScan = useCallback(async () => {
     try {
@@ -31,6 +41,21 @@ export default function ScanDetails() {
     }
   }, [id])
 
+<<<<<<< HEAD
+  const stopScan = async () => {
+    if (!confirm('Stop this scan?')) return
+    setStopping(true)
+    try {
+      await scanService.stopScan(id)
+      const updated = await scanService.getScan(id)
+      setScan(updated)
+    } catch (err) {
+      alert(err.response?.data?.detail || 'Failed to stop scan')
+    } finally {
+      setStopping(false)
+    }
+  }
+=======
   useEffect(() => { loadScan() }, [loadScan])
 
   // Poll every 5 seconds if scan is still running
@@ -40,6 +65,7 @@ export default function ScanDetails() {
     const interval = setInterval(() => loadScan(), 5000)
     return () => clearInterval(interval)
   }, [scan, loadScan])
+>>>>>>> heet-scan-engine
 
   const generateReport = async type => {
     setReporting(true)
@@ -85,9 +111,25 @@ export default function ScanDetails() {
           </p>
         </div>
         <div className="flex gap-2">
-          <button className="btn-ghost" onClick={() => navigate('/scan/history')}>
+          <button className="btn-ghost" onClick={() => navigate('/history')}>
             ← Back
           </button>
+<<<<<<< HEAD
+          {scan?.status === 'running' || scan?.status === 'pending' ? (
+            <button
+              className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+              disabled={stopping}
+              onClick={stopScan}>
+              {stopping ? 'Stopping...' : 'Stop Scan'}
+            </button>
+          ) : null}
+          <button
+            className="btn-primary"
+            disabled={reporting || scan?.status !== 'completed'}
+            onClick={() => generateReport('pdf')}>
+            {reporting ? 'Generating...' : 'Export PDF'}
+          </button>
+=======
           {scan?.status !== 'completed' && (
             <button
               className="btn-ghost flex items-center gap-2"
@@ -114,6 +156,7 @@ export default function ScanDetails() {
               </button>
             </>
           )}
+>>>>>>> heet-scan-engine
         </div>
       </div>
 

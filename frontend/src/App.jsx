@@ -24,8 +24,13 @@ function PrivateRoute({ children }) {
 }
 
 function AppLayout() {
-  const { user } = useAuth()
-  if (!user) return null
+  const { user, loading } = useAuth()
+  if (loading) return (
+    <div className="flex items-center justify-center h-screen bg-gray-950">
+      <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-sky-500"/>
+    </div>
+  )
+  if (!user) return <Navigate to="/login" replace />
   return (
     <div className="flex h-screen bg-gray-950 overflow-hidden">
       <Sidebar />

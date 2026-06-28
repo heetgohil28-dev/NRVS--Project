@@ -1,131 +1,129 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from typing import Optional
-from pydantic import BaseModel
-
 from app.database.connection import get_db
-from app.database.models import Report, ScanJob, ScanStatus, User
+from app.database.models import Report, ScanJob, User
+from app.services.report_service import (
+    generate_html_report,
+    generate_pdf_report,
+    generate_json_report,
+)
 from app.api.auth import get_current_user
+import os
+import logging
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
 
-class ReportRequest(BaseModel):
-    scan_id:          int
-    report_type:      str
-    include_evidence: Optional[bool] = True
-
-
-@router.post("/generate", status_code=202)
-def generate_report(
-    req:          ReportRequest,
-    db:           Session = Depends(get_db),
-    current_user: User    = Depends(get_current_user)
-):
-    scan = db.query(ScanJob).filter(
-        ScanJob.id       == req.scan_id,
-        ScanJob.owner_id == current_user.id
-    ).first()
+def _verify_scan_access(scan_id: int, current_user: User, db: Session) -> ScanJob:
+    scan = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
     if not scan:
-        raise HTTPException(status_code=404, detail="Scan not found")
-    if scan.status != ScanStatus.COMPLETED:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan not found")
+    if current_user.role != "admin" and scan.owner_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    return scan
+
+
+@router.post("/generate/{scan_id}")
+def generate_report(
+    scan_id:      int,
+    report_type:  str     = "json",
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    _verify_scan_access(scan_id, current_user, db)
+
+    if report_type not in ("html", "pdf", "json"):
         raise HTTPException(
-            status_code=400,
-            detail=f"Scan is {scan.status} — must be completed to generate report"
-        )
-    if req.report_type not in ["pdf", "html", "json"]:
-        raise HTTPException(
-            status_code=400,
-            detail="report_type must be pdf, html, or json"
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="report_type must be html, pdf, or json",
         )
 
-    report = Report(
-        scan_id      = req.scan_id,
-        owner_id     = current_user.id,
-        report_type  = req.report_type,
-        total_hosts  = len(scan.hosts),
-        total_vulns  = sum(len(h.vulnerabilities) for h in scan.hosts),
-        critical_count = sum(
-            1 for h in scan.hosts for v in h.vulnerabilities
-            if str(v.severity) == "critical"
-        ),
-        high_count = sum(
-            1 for h in scan.hosts for v in h.vulnerabilities
-            if str(v.severity) == "high"
-        ),
-        medium_count = sum(
-            1 for h in scan.hosts for v in h.vulnerabilities
-            if str(v.severity) == "medium"
-        ),
-        low_count = sum(
-            1 for h in scan.hosts for v in h.vulnerabilities
-            if str(v.severity) == "low"
-        ),
-    )
-    db.add(report)
-    db.commit()
-    db.refresh(report)
+    try:
+        if report_type == "html":
+            report = generate_html_report(scan_id, current_user.id, db)
+        elif report_type == "pdf":
+            report = generate_pdf_report(scan_id, current_user.id, db)
+        else:
+            report = generate_json_report(scan_id, current_user.id, db)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error("Report generation failed: %s", str(e))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Report generation failed")
 
     return {
         "report_id":   report.id,
-        "scan_id":     req.scan_id,
-        "report_type": req.report_type,
-        "status":      "queued",
-        "message":     "Report generation queued."
+        "scan_id":     scan_id,
+        "report_type": report_type,
+        "file_size":   report.file_size,
+        "created_at":  report.created_at,
     }
+
+
+@router.get("/download/{report_id}")
+def download_report(
+    report_id:    int,
+    db:           Session = Depends(get_db),
+    current_user: User    = Depends(get_current_user),
+):
+    report = db.query(Report).filter(Report.id == report_id).first()
+    if not report:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+    if current_user.role != "admin" and report.owner_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    if not report.file_path or not os.path.exists(report.file_path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report file not found on disk")
+
+    media_types = {"html": "text/html", "pdf": "application/pdf", "json": "application/json"}
+    return FileResponse(
+        path=report.file_path,
+        media_type=media_types.get(report.report_type, "application/octet-stream"),
+        filename=os.path.basename(report.file_path),
+    )
 
 
 @router.get("/")
 def list_reports(
     db:           Session = Depends(get_db),
-    current_user: User    = Depends(get_current_user)
+    current_user: User    = Depends(get_current_user),
 ):
-    reports = db.query(Report).filter(
-        Report.owner_id == current_user.id
-    ).order_by(Report.created_at.desc()).all()
+    query = db.query(Report)
+    if current_user.role != "admin":
+        query = query.filter(Report.owner_id == current_user.id)
+
+    reports = query.order_by(Report.created_at.desc()).limit(50).all()
     return [
         {
             "report_id":   r.id,
             "scan_id":     r.scan_id,
             "report_type": r.report_type,
+            "file_size":   r.file_size,
             "total_hosts": r.total_hosts,
             "total_vulns": r.total_vulns,
-            "critical":    r.critical_count,
-            "high":        r.high_count,
-            "file_path":   r.file_path,
             "created_at":  r.created_at,
         }
         for r in reports
     ]
 
 
-@router.get("/{report_id}")
-def get_report(
-    report_id:    int,
-    db:           Session = Depends(get_db),
-    current_user: User    = Depends(get_current_user)
-):
-    report = db.query(Report).filter(
-        Report.id       == report_id,
-        Report.owner_id == current_user.id
-    ).first()
-    if not report:
-        raise HTTPException(status_code=404, detail="Report not found")
-    return report
-
-
-@router.delete("/{report_id}")
+@router.delete("/{report_id}", status_code=status.HTTP_200_OK)
 def delete_report(
     report_id:    int,
     db:           Session = Depends(get_db),
-    current_user: User    = Depends(get_current_user)
+    current_user: User    = Depends(get_current_user),
 ):
-    report = db.query(Report).filter(
-        Report.id       == report_id,
-        Report.owner_id == current_user.id
-    ).first()
+    report = db.query(Report).filter(Report.id == report_id).first()
     if not report:
-        raise HTTPException(status_code=404, detail="Report not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+    if current_user.role != "admin" and report.owner_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    if report.file_path and os.path.exists(report.file_path):
+        os.remove(report.file_path)
+
     db.delete(report)
     db.commit()
-    return {"message": f"Report {report_id} deleted"}
+    logger.info("Report #%s deleted by %s", report_id, current_user.username)
+    return {"message": f"Report #{report_id} deleted"}

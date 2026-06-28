@@ -7,8 +7,8 @@ import {
 const links = [
   { to: '/',              icon: LayoutDashboard, label: 'Dashboard'       },
   { to: '/scan/new',      icon: Plus,            label: 'New Scan'        },
-  { to: '/scan/history',  icon: History,         label: 'Scan History'    },
-  { to: '/scan/compare',  icon: GitCompare,      label: 'Compare Scans'   },
+  { to: '/history',  icon: History,         label: 'Scan History'    },
+  { to: '/compare',  icon: GitCompare,      label: 'Compare Scans'   },
   { to: '/assets',        icon: Package,         label: 'Asset Inventory' },
   { to: '/reports',       icon: FileText,        label: 'Reports'         },
 ]
