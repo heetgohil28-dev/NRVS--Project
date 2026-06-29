@@ -9,21 +9,6 @@ BLOCKED_FLAGS = [
     "--script-args-file",
 ]
 
-ALLOWED_PATTERN = re.compile(
-    r'^(-p[\s\d,\-]+|'
-    r'-T[0-5]|'
-    r'--open|'
-    r'-sV|-sC|-sS|-sT|-sU|-sN|-sF|-sX|'
-    r'-O|'
-    r'-A|'
-    r'--script=[a-z0-9\-,]+|'
-    r'--version-intensity\s+[0-9]|'
-    r'--host-timeout\s+[\d]+[sm]|'
-    r'--max-retries\s+[0-9]+|'
-    r'--min-rate\s+[0-9]+|'
-    r'--max-rate\s+[0-9]+)$'
-)
-
 MAX_ARGS_LENGTH = 200
 
 
@@ -43,6 +28,25 @@ def validate_custom_args(args: str) -> str:
     for char in [';', '&', '|', '`', '$', '>', '<', '\\', '\n', '\r']:
         if char in args:
             raise ValueError(f"Invalid character in custom args: '{char}'")
+
+    # Validate each token
+    ALLOWED_PATTERN = re.compile(
+        r'^(-p[\d,\-]+$|'               # -p80,443 or -p1-1000
+        r'-p$|'                          # -p alone (port list follows as next token)
+        r'[\d,\-]+$|'                    # port list: 21,22,80 or 1-1000
+        r'-T[0-5]$|'
+        r'--open$|'
+        r'-sV$|-sC$|-sS$|-sT$|-sU$|-sN$|-sF$|-sX$|'
+        r'-O$|'
+        r'-A$|'
+        r'--script=[a-z0-9\-,]+$|'
+        r'--version-intensity$|'
+        r'--host-timeout$|'
+        r'--max-retries$|'
+        r'--min-rate$|'
+        r'--max-rate$|'
+        r'[0-9]+[sm]?$)'                 # numeric values for flags above
+    )
 
     tokens = args.split()
     for token in tokens:
