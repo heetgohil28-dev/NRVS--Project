@@ -1,48 +1,58 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from app.database.connection import init_db
 from app.api import scan, assets, dashboard, reports, auth
 from app.utils.websocket_manager import ws_manager
-import os, json
 from dotenv import load_dotenv
+import logging
+import os
 
 load_dotenv()
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+logger = logging.getLogger(__name__)
+
 ALLOWED_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+ALLOWED_HOSTS   = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Starting NRVS — initializing DB...")
+    logger.info("Starting NRVS — initializing DB...")
     init_db()
     os.makedirs("app/static/screenshots", exist_ok=True)
-    os.makedirs("/tmp/nrvs_reports", exist_ok=True)
-    print("DB ready")
+    os.makedirs("reports", exist_ok=True)
+    logger.info("DB ready")
     yield
-    print("NRVS shutting down")
+    logger.info("NRVS shutting down")
 
 
 app = FastAPI(
     title="NRVS — Network & Vulnerability Scanner",
     version="2.0.0",
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
-    lifespan=lifespan
+    docs_url="/api/docs" if os.getenv("ENV", "development") != "production" else None,
+    redoc_url="/api/redoc" if os.getenv("ENV", "development") != "production" else None,
+    lifespan=lifespan,
 )
+
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
-# All routers under /api prefix
 app.include_router(auth.router,      prefix="/api")
 app.include_router(scan.router,      prefix="/api")
 app.include_router(assets.router,    prefix="/api")
@@ -66,5 +76,5 @@ def health():
         "status":          "ok",
         "service":         "NRVS",
         "version":         "2.0.0",
-        "active_ws_scans": ws_manager.get_active_scans()
+        "active_ws_scans": ws_manager.get_active_scans(),
     }
