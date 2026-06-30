@@ -272,7 +272,7 @@ NRVS is intended only for systems you own or have explicit written authorization
 ## Authors
 
 **Heet Gohil** - Scan Engine, Asset Inventory, Risk Scoring, WebSocket Manager, Screenshot Service  
-**Heet's LinkedIn** - https://www.linkedin.com/in/heetgohil/ 
+**Heet's LinkedIn** - https://www.linkedin.com/in/heetgohil/   
 **Github** - https://github.com/heetgohil28-dev 
 
 **Maitrey Suthar** - Auth, CVE Engine, MITRE Mapping, Reports  
