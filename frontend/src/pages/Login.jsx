@@ -32,6 +32,9 @@ export default function Login() {
           <h1 className="text-2xl font-bold text-white">NRVS</h1>
           <p className="text-gray-500 text-sm">Network & Vulnerability Scanner</p>
         </div>
+        <div className="bg-yellow-900/30 border border-yellow-700 text-yellow-300 text-xs px-3 py-2 rounded-lg mb-4 text-center">
+          This is a static demo. Backend, scanning, and authentication require running the project locally via Docker. See the README for setup instructions.
+        </div>
         <form onSubmit={handle} className="card flex flex-col gap-4">
           <h2 className="text-lg font-semibold text-white">Sign In</h2>
           {error && (
