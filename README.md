@@ -1,48 +1,68 @@
-NRVS is an online tool that works like a web search.NRVS is an online tool that can be used akin to a web search.
+# NRVS - Network Recon & Vulnerability Scanner
 
-Automatically discover networks, list services, correlate CVEs and provide risk scores with a comprehensive vulnerability assessment solution with a real-time dashboard displayed using React, and professional reports produced.
+A full-stack vulnerability assessment platform that automates network discovery, service enumeration, CVE correlation, and risk scoring — with a real-time React dashboard and professional reporting output.
 
-For internal approving, defensive security operations and organized security learning. Does NOT carry out exploitation.
+Built for authorized internal assessments, defensive security workflows, and structured security education. Does not perform exploitation.
 
+---
 
-What It Does
+## What It Does
 
-CapabilityDescriptionHost & Port DiscoveryNmap-powered scanning of single hosts, target lists or CIDR rangesService & Version DetectionIdentifies running services, with version strings for accurate CVE matchingCVE CorrelationMaps detected versions to published vulnerabilities with CVSS scoringRisk ScoringComputes per-asset risk scores from severity distribution and exposure profileHistorical ComparisonDiffs scan results over time, surfaces new findings and resolved issuesScreenshot EvidenceCaptures web service screenshots automatically at scan timeReportingExports HTML, PDF and JSON reports for stakeholder distributionAuthenticationJWT-secured API with hashed password storage
+| Capability | Description |
+|---|---|
+| Host & Port Discovery | Nmap-powered scanning across single hosts, target lists, or CIDR ranges |
+| Service & Version Detection | Identifies running services with version strings for accurate CVE matching |
+| CVE Correlation | Maps detected versions to published vulnerabilities with CVSS scoring |
+| Risk Scoring | Computes per-asset risk scores from severity distribution and exposure profile |
+| MITRE ATT&CK Mapping | Connects findings to adversary technique context for prioritization |
+| Historical Comparison | Diffs scan results over time — surfaces new findings and resolved issues |
+| Screenshot Evidence | Captures web service screenshots automatically at scan time |
+| Reporting | Exports HTML, PDF, and JSON reports for stakeholder distribution |
+| Real-Time Progress | WebSocket-driven scan updates streamed live to the dashboard |
+| Authentication | JWT-secured API with hashed password storage |
 
+---
 
-Stack
+## Stack
 
-Frontend — HTML, CSS, and JavaScript.Database — PostgreSQL.
-Frontend — Material Design and JQuery
-To create a Docker image.To download an image.
+**Backend** — Python, FastAPI, SQLAlchemy, PostgreSQL, python-nmap, WebSockets, JWT  
+**Frontend** — React, Tailwind CSS, Chart.js, Axios  
+**Infra** — Docker, Docker Compose
 
+---
 
-Workflow
+## Workflow
 
-This process includes login, selecting the target, running a scan, enumerating the services, mapping the CVE, calculating the risk score and then viewing the scan results on the dashboard or export the scan report.
+```
+Login → Select Target → Run Scan → Service Enumeration → CVE Mapping → Risk Score → Dashboard → Export Report
+```
 
-Monitor progress of scan streams in real-time. Results are stored in PostgreSQL so that they can be compared across assessment cycles for historical purposes. Reports are made to be sent to the stakeholders directly.
+Scan progress streams in real time. Results persist to PostgreSQL for historical comparison across assessment cycles. Reports are formatted for direct stakeholder distribution.
 
+---
 
-Use Cases
+## Use Cases
 
+- Internal vulnerability assessments and network auditing
+- Homelab and controlled lab environments
+- Security awareness training and education
+- Asset discovery and inventory
+- Cybersecurity portfolio demonstration
 
-Internal vulnerability checks and network audits.
-Home lab and familiar lab environment.
-Educating and awareness building
-Finding assets and building reserves.Building up reserves of assets and inventory.
-Cybersecurity portfolio demonstration
+---
 
+## Disclaimer
 
-Disclaimer
+NRVS is intended only for systems you own or have explicit written authorization to assess. Unauthorized scanning is illegal in most jurisdictions. The authors assume no liability for misuse. Users bear full legal and ethical responsibility for all scanning activity.
 
-NRVS is for systems which you own, or have explicit written permission to assess. Scanning: In the majority of countries scanning is illegal if not agreed upon. The author can take no responsibility for misuse. The user assumes responsibility and is subject to the law and ethical standards in respect of all scanning activities.
+---
 
+## Authors
 
-Author
+**Champ** — Scan Engine, Asset Inventory, Risk Scoring, WebSocket Manager, Screenshot Service  
+**Maitrey Suthar** — Auth, CVE Engine, MITRE Mapping, Reports  
 
-Heet Gohil 
+*Cybersecurity Engineering Students | Offensive Security & Red Teaming*
 
-Maitrey Suthar
-A Cybersecurity Engineering Student involved in Offensive Security and Red Teaming.
-LinkedIn · GitHub
+Champ's LinkedIn · Champ's GitHub  
+Maitrey's LinkedIn · Maitrey's GitHub
